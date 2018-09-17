@@ -1,5 +1,5 @@
 using StataDTAFiles, Test
-using StataDTAFiles: readtag, verifytag, readheader, LSF
+using StataDTAFiles: readtag, verifytag, readheader, readmap, LSF
 
 @testset "reading tags" begin
     @test readtag(IOBuffer("<atag>")) == "atag"
@@ -19,5 +19,7 @@ end
     @test hdr.variables == 3
     @test hdr.observations == 10
     @test hdr.label == ""
+    map = readmap(io, hdr.byteorder)
+    @test map.eof == filesize(testdata)
     close(io)
 end

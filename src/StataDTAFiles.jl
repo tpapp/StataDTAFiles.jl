@@ -95,4 +95,29 @@ function readheader(io::IO)
     end
 end
 
+struct DTAMap
+    stata_data_open::Int64
+    map::Int64
+    variable_types::Int64
+    varnames::Int64
+    sortlist::Int64
+    formats::Int64
+    value_label_names::Int64
+    variable_labels::Int64
+    characteristics::Int64
+    data::Int64
+    strls::Int64
+    value_labels::Int64
+    stata_data_close::Int64
+    eof::Int64
+end
+
+function readmap(io::IO, byteorder::ByteOrder)
+    verifytag(io, "map") do io
+        map = DTAMap([readnum(io, byteorder, Int64) for _ in 1:14]...)
+        @assert map.stata_data_open == 0
+        map
+    end
+end
+
 end # module
