@@ -77,7 +77,7 @@ end
 struct DTAHeader{B <: ByteOrder}
     release::Int
     byteorder::B
-    columns::Int
+    variables::Int
     observations::Int
     label::String
     timestamp::String           # FIXME parse date in timestamp

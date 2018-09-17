@@ -16,7 +16,8 @@ end
     hdr = readheader(io)
     @test hdr.release == 118
     @test hdr.byteorder ≡ LSF()
-    @test hdr.columns == 3
+    @test hdr.variables == 3
     @test hdr.observations == 10
+    @test hdr.label == ""
     close(io)
 end
