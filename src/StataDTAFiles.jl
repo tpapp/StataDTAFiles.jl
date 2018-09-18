@@ -3,7 +3,7 @@ module StataDTAFiles
 using ArgCheck: @argcheck
 using DocStringExtensions: SIGNATURES
 
-import Base: read
+import Base: read, seek
 
 export StrFs
 
@@ -21,7 +21,9 @@ struct ByteOrderIO{B <: ByteOrder, T <: IO} <: IO
     io::T
 end
 
-Base.read(io::ByteOrderIO, ::Type{UInt8}) = read(io.io, UInt8)
+read(io::ByteOrderIO, ::Type{UInt8}) = read(io.io, UInt8)
+
+seek(io::ByteOrderIO, pos) = seek(io.io, pos)
 
 
 # tag verification
@@ -93,15 +95,30 @@ readnum(boio::ByteOrderIO{MSF}, T) = ntoh(read(boio.io, T))
 
 readnum(boio::ByteOrderIO{LSF}, T) = ltoh(read(boio.io, T))
 
-function readstrfs(boio::ByteOrderIO, T)
-    len = Int(readnum(boio, T))
+"""
+$(SIGNATURES)
+
+Read chars into a buffer of length `len`, find the terminating "\0" (if any) and truncate,
+returning a string.
+"""
+function readchompedstring(boio::ByteOrderIO, len::Integer)
     buffer = Vector{UInt8}(undef, len)
     read!(boio.io, buffer)
     numchars = findfirst(isequal(0x00), buffer)
     if numchars ≢ nothing
-        resize!(buffer, numchars)
+        resize!(buffer, numchars - 1)
     end
     String(buffer)
+end
+
+"""
+$(SIGNATURES)
+
+Read length (of type T), then read and chomp the string.
+"""
+function readstrfs(boio::ByteOrderIO, T::Type{<:Integer})
+    len = Int(readnum(boio, T))
+    readchompedstring(boio, len)
 end
 
 struct DTAHeader{B <: ByteOrder}
@@ -175,9 +192,16 @@ function decode_variable_type(code::UInt16)
 end
 
 function read_variable_types(boio::ByteOrderIO, header::DTAHeader, map::DTAMap)
-    seek(boio.io, map.variable_types)
+    seek(boio, map.variable_types)
     verifytag(boio, "variable_types") do boio
         ((decode_variable_type(readnum(boio, UInt16)) for _ in 1:header.variables)..., )
+    end
+end
+
+function read_variable_names(boio::ByteOrderIO, header::DTAHeader, map::DTAMap)
+    seek(boio, map.varnames)
+    verifytag(boio, "varnames") do boio
+        [readchompedstring(boio, 129) for _ in 1:header.variables]
     end
 end
 
