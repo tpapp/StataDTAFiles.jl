@@ -1,25 +1,25 @@
 using StataDTAFiles, Test
-using StataDTAFiles: readtag, verifytag, readheader, readmap, LSF
+using StataDTAFiles: verifytag, readheader, readmap, LSF
 
 @testset "reading tags" begin
-    @test readtag(IOBuffer("<atag>")) == "atag"
-    @test readtag(IOBuffer("</btag>")) == "/btag"
-    @test_throws ErrorException readtag(IOBuffer("noopening>"))
-    @test_throws ErrorException readtag(IOBuffer("<eof"))
-    @test_throws ErrorException readtag(IOBuffer("<toolong"); maxbytes = 3)
+    @test verifytag(IOBuffer("<atag>"), "atag") == nothing
+    @test verifytag(IOBuffer("</btag>"), "btag", true) == nothing
+    @test_throws ErrorException verifytag(IOBuffer("noopening>"), "noopening")
+    @test_throws EOFError verifytag(IOBuffer("<eof"), "eof")
+    @test_throws ErrorException verifytag(IOBuffer("<a>"), "b")
 end
 
 @testset "reading header" begin
     testdata = joinpath(@__DIR__, "data", "testdata.dta")
     io = open(testdata, "r")
     verifytag(io, "stata_dta")
-    hdr = readheader(io)
+    hdr, boio = readheader(io)
     @test hdr.release == 118
     @test hdr.byteorder ≡ LSF()
     @test hdr.variables == 3
     @test hdr.observations == 10
     @test hdr.label == ""
-    map = readmap(io, hdr.byteorder)
+    map = readmap(boio)
     @test map.eof == filesize(testdata)
     close(io)
 end

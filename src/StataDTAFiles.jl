@@ -3,33 +3,65 @@ module StataDTAFiles
 using ArgCheck: @argcheck
 using DocStringExtensions: SIGNATURES
 
-"""
-$(SIGNATURES)
+import Base: read
 
-Read `"<tag>"` from `io` as `"tag"`. For closing tags, the initial `'/'` is included.
+
+# types for byteorder handling and IO wrapper
 
-Throw an error after `maxbytes` bytes are read.
-"""
-function readtag(io::IO; maxbytes = 128)
-    lt = read(io, UInt8)
-    lt == UInt8('<') || error("First byte is not a '<'.")
-    content = Vector{UInt8}()
-    bytecount = 0
-    while !eof(io) && bytecount < maxbytes
-        c = read(io, UInt8)
-        if c == UInt8('>')
-            return String(content)
-        else
-            push!(content, c)
-            bytecount += 1
-        end
-    end
-    msg = eof(io) ? "Reached end of file" : "Read $(bytecount) bytes"
-    error("$(msg) without finding a closing '>'.")
+abstract type ByteOrder end
+
+struct MSF <: ByteOrder end     # big-endian
+
+struct LSF <: ByteOrder end     # little-endian
+
+struct ByteOrderIO{B <: ByteOrder, T <: IO} <: IO
+    byteorder::B
+    io::T
 end
 
-## FIXME this could be much faster, not required to read
-verifytag(io::IO, tag, closing = false) = @assert readtag(io) == (closing ? "/" * tag : tag)
+Base.read(io::ByteOrderIO, ::Type{UInt8}) = read(io.io, UInt8)
+
+
+# tag verification
+
+# """
+# $(SIGNATURES)
+
+# Read `"<tag>"` from `io` as `"tag"`. For closing tags, the initial `'/'` is included.
+
+# Throw an error after `maxbytes` bytes are read.
+# """
+# function readtag(io::IO; maxbytes = 128)
+#     lt = read(io, UInt8)
+#     lt == UInt8('<') || error("First byte is not a '<'.")
+#     content = Vector{UInt8}()
+#     bytecount = 0
+#     while !eof(io) && bytecount < maxbytes
+#         c = read(io, UInt8)
+#         if c == UInt8('>')
+#             return String(content)
+#         else
+#             push!(content, c)
+#             bytecount += 1
+#         end
+#     end
+#     msg = eof(io) ? "Reached end of file" : "Read $(bytecount) bytes"
+#     error("$(msg) without finding a closing '>'.")
+# end
+
+function verifytag(io::IO, tag::AbstractArray{UInt8}, closing::Bool = false)
+    read(io, UInt8) == UInt8('<') || error("First byte is not a '<'.")
+    if closing
+        read(io, UInt8) == UInt8('/') || error("/ expected (closing tag).")
+    end
+    for c in tag
+        read(io, UInt8) == c || error("not the expected tag.")
+    end
+    read(io, UInt8) == UInt8('>') || error("Tag not closed with '>'.")
+    nothing
+end
+
+verifytag(io::IO, tag::String, closing::Bool = false) = verifytag(io, codeunits(tag), closing)
 
 function verifytag(f, io::IO, tag)
     verifytag(io, tag)
@@ -38,21 +70,13 @@ function verifytag(f, io::IO, tag)
     result
 end
 
-readfixed(io::IO, nb) = String(read!(io, Vector{UInt8}(undef, nb)))
+readfixedstring(io::IO, nb) = String(read!(io, Vector{UInt8}(undef, nb)))
 
-abstract type ByteOrder end
-
-struct MSF <: ByteOrder end     # big-endian
-
-struct LSF <: ByteOrder end     # little-endian
-
-readnum(io::IO, ::MSF, T) = ntoh(read(io, T))
-
-readnum(io::IO, ::LSF, T) = ltoh(read(io, T))
+
 
 function readbyteorder(io::IO)
     verifytag(io, "byteorder") do io
-        order = readfixed(io, 3)
+        order = readfixedstring(io, 3)
         if order == "MSF"
             MSF()
         elseif order == "LSF"
@@ -63,10 +87,14 @@ function readbyteorder(io::IO)
     end
 end
 
-function readstrfs(io::IO, byteorder, T)
-    len = Int(readnum(io, byteorder, T))
+readnum(boio::ByteOrderIO{MSF}, T) = ntoh(read(boio.io, T))
+
+readnum(boio::ByteOrderIO{LSF}, T) = ltoh(read(boio.io, T))
+
+function readstrfs(boio::ByteOrderIO, T)
+    len = Int(readnum(boio, T))
     buffer = Vector{UInt8}(undef, len)
-    read!(io, buffer)
+    read!(boio.io, buffer)
     numchars = findfirst(isequal(0x00), buffer)
     if numchars ≢ nothing
         resize!(buffer, numchars)
@@ -85,13 +113,14 @@ end
 
 function readheader(io::IO)
     verifytag(io, "header") do io
-        @assert verifytag(io -> readfixed(io, 3), io, "release") == "118"
+        @assert verifytag(io -> readfixedstring(io, 3), io, "release") == "118"
         byteorder = readbyteorder(io)
-        K = verifytag(io -> readnum(io, byteorder, Int16), io, "K")
-        N = verifytag(io -> readnum(io, byteorder, Int64), io, "N")
-        label = verifytag(io -> readstrfs(io, byteorder, Int16), io, "label")
-        timestamp = verifytag(io -> readstrfs(io, byteorder, Int8), io, "timestamp")
-        DTAHeader(118, byteorder, Int(K), Int(N), label, timestamp)
+        boio = ByteOrderIO(byteorder, io)
+        K = verifytag(boio -> readnum(boio, Int16), boio, "K")
+        N = verifytag(boio -> readnum(boio, Int64), boio, "N")
+        label = verifytag(boio -> readstrfs(boio, Int16), boio, "label")
+        timestamp = verifytag(boio -> readstrfs(boio, Int8), boio, "timestamp")
+        DTAHeader(118, byteorder, Int(K), Int(N), label, timestamp), boio
     end
 end
 
@@ -112,12 +141,37 @@ struct DTAMap
     eof::Int64
 end
 
-function readmap(io::IO, byteorder::ByteOrder)
-    verifytag(io, "map") do io
-        map = DTAMap([readnum(io, byteorder, Int64) for _ in 1:14]...)
+function readmap(boio::ByteOrderIO)
+    verifytag(boio, "map") do boio
+        map = DTAMap([readnum(boio, Int64) for _ in 1:14]...)
         @assert map.stata_data_open == 0
         map
     end
 end
+
+const STRFSMAXLEN = 2045
+
+struct StrFs{len}
+    function StrFs{len}() where len
+        @assert 1 ≤ len::Int ≤ STRFSMAXLEN
+        new{len}()
+    end
+end
+
+struct StrL end
+
+function decode_variable_type(code::UInt16)
+    if 1 ≤ code ≤ STRFSMAXLEN
+        StrFs{code}
+    elseif code == 32768
+        StrL
+    elseif 65526 ≤ code ≤ 65530
+        (Float64, Float32, Int32, Int16, Int8)[code - 65525]
+    else
+        error("unrecognized variable type code $(code)")
+    end
+end
+
+# function read_variable_types(io::IO, byteorder
 
 end # module
