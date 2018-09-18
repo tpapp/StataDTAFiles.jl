@@ -5,6 +5,8 @@ using DocStringExtensions: SIGNATURES
 
 import Base: read
 
+export StrFs
+
 
 # types for byteorder handling and IO wrapper
 
@@ -162,7 +164,7 @@ struct StrL end
 
 function decode_variable_type(code::UInt16)
     if 1 ≤ code ≤ STRFSMAXLEN
-        StrFs{code}
+        StrFs{Int(code)}
     elseif code == 32768
         StrL
     elseif 65526 ≤ code ≤ 65530
@@ -172,6 +174,11 @@ function decode_variable_type(code::UInt16)
     end
 end
 
-# function read_variable_types(io::IO, byteorder
+function read_variable_types(boio::ByteOrderIO, header::DTAHeader, map::DTAMap)
+    seek(boio.io, map.variable_types)
+    verifytag(boio, "variable_types") do boio
+        ((decode_variable_type(readnum(boio, UInt16)) for _ in 1:header.variables)..., )
+    end
+end
 
 end # module

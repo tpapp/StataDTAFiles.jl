@@ -1,5 +1,5 @@
 using StataDTAFiles, Test
-using StataDTAFiles: verifytag, readheader, readmap, LSF
+using StataDTAFiles: LSF, verifytag, readheader, readmap, read_variable_types
 
 @testset "reading tags" begin
     @test verifytag(IOBuffer("<atag>"), "atag") == nothing
@@ -21,5 +21,7 @@ end
     @test hdr.label == ""
     map = readmap(boio)
     @test map.eof == filesize(testdata)
+    vartypes = read_variable_types(boio, hdr, map)
+    @test vartypes == (Float32, Int16, StrFs{2})
     close(io)
 end
