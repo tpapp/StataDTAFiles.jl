@@ -4,9 +4,9 @@ using ArgCheck: @argcheck
 using DocStringExtensions: SIGNATURES
 using Parameters: @unpack
 
-import Base: read, seek, iterate, length
+import Base: read, seek, iterate, length, open, close, eltype
 
-export StrFs, rows_iterator
+export DTAFile, StrFs, StrL, dtatypes, vartypes
 
 
 # types for byteorder handling and IO wrapper
@@ -29,31 +29,6 @@ seek(io::ByteOrderIO, pos) = seek(io.io, pos)
 
 # tag verification
 
-# """
-# $(SIGNATURES)
-
-# Read `"<tag>"` from `io` as `"tag"`. For closing tags, the initial `'/'` is included.
-
-# Throw an error after `maxbytes` bytes are read.
-# """
-# function readtag(io::IO; maxbytes = 128)
-#     lt = read(io, UInt8)
-#     lt == UInt8('<') || error("First byte is not a '<'.")
-#     content = Vector{UInt8}()
-#     bytecount = 0
-#     while !eof(io) && bytecount < maxbytes
-#         c = read(io, UInt8)
-#         if c == UInt8('>')
-#             return String(content)
-#         else
-#             push!(content, c)
-#             bytecount += 1
-#         end
-#     end
-#     msg = eof(io) ? "Reached end of file" : "Read $(bytecount) bytes"
-#     error("$(msg) without finding a closing '>'.")
-# end
-
 function verifytag(io::IO, tag::AbstractArray{UInt8}, closing::Bool = false)
     read(io, UInt8) == UInt8('<') || error("First byte is not a '<'.")
     if closing
@@ -68,16 +43,17 @@ end
 
 verifytag(io::IO, tag::String, closing::Bool = false) = verifytag(io, codeunits(tag), closing)
 
-function verifytag(f, io::IO, tag)
+function verifytag(f::Function, io::IO, tag)
     verifytag(io, tag)
     result = f(io)
     verifytag(io, tag, true)
     result
 end
 
-readfixedstring(io::IO, nb) = String(read!(io, Vector{UInt8}(undef, nb)))
-
 
+# reading primitives
+
+readfixedstring(io::IO, nb) = String(read!(io, Vector{UInt8}(undef, nb)))
 
 function readbyteorder(io::IO)
     verifytag(io, "byteorder") do io
@@ -137,16 +113,21 @@ function readstrfs(boio::ByteOrderIO, T::Type{<:Integer})
     readchompedstring(boio, len)
 end
 
-struct DTAHeader{B <: ByteOrder}
+
+# header
+
+"""
+DTA file header (without the byte order, which is encoded in the corresponding `ByteOrderIO`.
+"""
+struct DTAHeader
     release::Int
-    byteorder::B
     variables::Int
     observations::Int
     label::String
     timestamp::String           # FIXME parse date in timestamp
 end
 
-function readheader(io::IO)
+function read_header(io::IO)
     verifytag(io, "header") do io
         @assert verifytag(io -> readfixedstring(io, 3), io, "release") == "118"
         byteorder = readbyteorder(io)
@@ -155,9 +136,12 @@ function readheader(io::IO)
         N = verifytag(boio -> readnum(boio, Int64), boio, "N")
         label = verifytag(boio -> readstrfs(boio, Int16), boio, "label")
         timestamp = verifytag(boio -> readstrfs(boio, Int8), boio, "timestamp")
-        DTAHeader(118, byteorder, Int(K), Int(N), label, timestamp), boio
+        DTAHeader(118, Int(K), Int(N), label, timestamp), boio
     end
 end
+
+
+# map
 
 struct DTAMap
     stata_data_open::Int64
@@ -176,13 +160,16 @@ struct DTAMap
     eof::Int64
 end
 
-function readmap(boio::ByteOrderIO)
+function read_map(boio::ByteOrderIO)
     verifytag(boio, "map") do boio
         map = DTAMap([readnum(boio, Int64) for _ in 1:14]...)
         @assert map.stata_data_open == 0
         map
     end
 end
+
+
+# types
 
 """
 Maximum length of `str#` (aka `strfs`) strings in Stata DTA files.
@@ -217,10 +204,19 @@ function read_variable_types(boio::ByteOrderIO, header::DTAHeader, map::DTAMap)
     end
 end
 
+vartype(::Type{T}) where {T <: DATANUMTYPES} = Union{Missing, T}
+
+vartype(::Type{<: StrFs}) = String
+
+vartype(::Type{StrL}) = String
+
+
+# metadata
+
 function read_variable_names(boio::ByteOrderIO, header::DTAHeader, map::DTAMap)
     seek(boio, map.varnames)
     verifytag(boio, "varnames") do boio
-        [readchompedstring(boio, 129) for _ in 1:header.variables]
+        ntuple(_ -> Symbol(readchompedstring(boio, 129)), header.variables)
     end
 end
 
@@ -262,30 +258,66 @@ readfield(boio::ByteOrderIO, ::Type{StrFs{N}}) where N = readchompedstring(boio,
 
 readrow(boio::ByteOrderIO, vartypes) = map(T -> readfield(boio, T), vartypes)
 
-struct ReadRowIterator{B <: ByteOrderIO, T}
+
+#
+
+struct DTAFile{VT, B <: ByteOrderIO, VN}
     boio::B
-    position::Int
-    vartypes::T
-    observations::Int
+    header::DTAHeader
+    map::DTAMap
+    variable_names::VN
+    sortlist::Vector{Int16}
+    formats::Vector{String}
 end
 
-function rows_iterator(boio::ByteOrderIO, header::DTAHeader, map::DTAMap)
-    variable_types =  # comes first, moves the position
-    ReadRowIterator(boio, map.data, read_variable_types(boio, header, map), header.observations)
+open(::Type{DTAFile}, path::AbstractString) = open(DTAFile, open(path, "r"))
+
+function open(::Type{DTAFile}, io::IO)
+    seekstart(io)
+    verifytag(io, "stata_dta")
+    # read header and map
+    header, boio = read_header(io)
+    map = read_map(boio)
+    # read the rest using map
+    variable_names = read_variable_names(boio, header, map)
+    sortlist = read_sortlist(boio, header, map)
+    formats = read_formats(boio, header, map)
+    variable_types = read_variable_types(boio, header, map)
+    DTAFile{Tuple{variable_types...}, typeof(boio), typeof(variable_names)
+            }(boio, header, map, variable_names, sortlist, formats)
 end
 
-length(rri::ReadRowIterator) = rri.observations
+function open(f::Function, ::Type{DTAFile}, args...)
+    dta = open(DTAFile, args...)
+    try
+        f(dta)
+    finally
+        close(dta)
+    end
+end
 
-function iterate(rri::ReadRowIterator, index = 1)
-    @unpack boio, position, vartypes, observations = rri
-    if index > observations
+close(dta::DTAFile) = close(dta.boio.io)
+
+dtatypes(dta::DTAFile{VT}) where VT = ntuple(i -> fieldtype(VT, i), fieldcount(VT))
+
+vartypes(dta::DTAFile) = vartype.(dtatypes(dta))
+
+
+# iteration interface
+
+eltype(dta::DTAFile) = Tuple{vartypes(dta)...}
+length(dta::DTAFile) = dta.header.observations
+
+function iterate(dta::DTAFile, index = 1)
+    @unpack boio = dta
+    if index > dta.header.observations
         nothing
     else
         if index == 1
-            seek(boio, position)
+            seek(boio, dta.map.data)
             verifytag(boio, "data")
         end
-        readrow(boio, vartypes), index + 1
+        readrow(boio, dtatypes(dta)), index + 1
     end
 end
 
