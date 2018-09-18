@@ -2,10 +2,11 @@ module StataDTAFiles
 
 using ArgCheck: @argcheck
 using DocStringExtensions: SIGNATURES
+using Parameters: @unpack
 
-import Base: read, seek
+import Base: read, seek, iterate, length
 
-export StrFs
+export StrFs, rows_iterator
 
 
 # types for byteorder handling and IO wrapper
@@ -91,9 +92,24 @@ function readbyteorder(io::IO)
     end
 end
 
-readnum(boio::ByteOrderIO{MSF}, T) = ntoh(read(boio.io, T))
+"""
+Number types is Stata that correspond to native Julia types, and are denoted by the latter.
+"""
+const DATANUMTYPES = Union{Int8, Int16, Int32, Float32, Float64}
 
-readnum(boio::ByteOrderIO{LSF}, T) = ltoh(read(boio.io, T))
+"""
+Number types which are read by `readnum`, in addition to `DATANUMTYPES`.
+"""
+const EXTRANUMTYPES = Union{Int64, UInt8, UInt16, UInt32, UInt64}
+
+"""
+All number types read by `readnum`.
+"""
+const READNUMTYPES = Union{DATANUMTYPES, EXTRANUMTYPES}
+
+readnum(boio::ByteOrderIO{MSF}, T::Type{<:READNUMTYPES}) = ntoh(read(boio.io, T))
+
+readnum(boio::ByteOrderIO{LSF}, T::Type{<:READNUMTYPES}) = ltoh(read(boio.io, T))
 
 """
 $(SIGNATURES)
@@ -168,6 +184,9 @@ function readmap(boio::ByteOrderIO)
     end
 end
 
+"""
+Maximum length of `str#` (aka `strfs`) strings in Stata DTA files.
+"""
 const STRFSMAXLEN = 2045
 
 struct StrFs{len}
@@ -202,6 +221,71 @@ function read_variable_names(boio::ByteOrderIO, header::DTAHeader, map::DTAMap)
     seek(boio, map.varnames)
     verifytag(boio, "varnames") do boio
         [readchompedstring(boio, 129) for _ in 1:header.variables]
+    end
+end
+
+function read_sortlist(boio::ByteOrderIO, header::DTAHeader, map::DTAMap)
+    seek(boio, map.sortlist)
+    verifytag(boio, "sortlist") do boio
+        sortlist = [readnum(boio, Int16) for _ in 1:(header.variables + 1)]
+        terminator = findfirst(iszero, sortlist)
+        @assert terminator ≢ nothing
+        sortlist[1:(terminator-1)]
+    end
+end
+
+function read_formats(boio::ByteOrderIO, header::DTAHeader, map::DTAMap)
+    seek(boio, map.formats)
+    verifytag(boio, "formats") do boio
+        [readchompedstring(boio, 57) for _ in 1:header.variables]
+    end
+end
+
+
+# read data
+
+const MAXINT8 = Int8(0x64)
+const MAXINT16 = Int16(0x7fe4)
+const MAXINT32 = Int32(0x7fffffe5)
+const MAXFLOAT32 = Float32(0x1.fffffep126)
+const MAXFLOAT64 = Float64(0x1.fffffffffffffp1022)
+
+decode_missing(x::Int8) = x ≥ MAXINT8 ? missing : x
+decode_missing(x::Int16) = x ≥ MAXINT16 ? missing : x
+decode_missing(x::Int32) = x ≥ MAXINT32 ? missing : x
+decode_missing(x::Float32) = x ≥ MAXFLOAT32 ? missing : x
+decode_missing(x::Float64) = x ≥ MAXFLOAT64 ? missing : x
+
+readfield(boio::ByteOrderIO, T::Type{<: DATANUMTYPES}) = decode_missing(read(boio, T))
+
+readfield(boio::ByteOrderIO, ::Type{StrFs{N}}) where N = readchompedstring(boio, N)
+
+readrow(boio::ByteOrderIO, vartypes) = map(T -> readfield(boio, T), vartypes)
+
+struct ReadRowIterator{B <: ByteOrderIO, T}
+    boio::B
+    position::Int
+    vartypes::T
+    observations::Int
+end
+
+function rows_iterator(boio::ByteOrderIO, header::DTAHeader, map::DTAMap)
+    variable_types =  # comes first, moves the position
+    ReadRowIterator(boio, map.data, read_variable_types(boio, header, map), header.observations)
+end
+
+length(rri::ReadRowIterator) = rri.observations
+
+function iterate(rri::ReadRowIterator, index = 1)
+    @unpack boio, position, vartypes, observations = rri
+    if index > observations
+        nothing
+    else
+        if index == 1
+            seek(boio, position)
+            verifytag(boio, "data")
+        end
+        readrow(boio, vartypes), index + 1
     end
 end
 
