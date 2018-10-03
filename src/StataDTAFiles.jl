@@ -3,6 +3,7 @@ module StataDTAFiles
 using ArgCheck: @argcheck
 using DocStringExtensions: SIGNATURES
 using Parameters: @unpack
+using StrFs: StrF
 
 import Base: read, seek, iterate, length, open, close, eltype
 
@@ -108,7 +109,7 @@ $(SIGNATURES)
 
 Read length (of type T), then read and chomp the string.
 """
-function readstrfs(boio::ByteOrderIO, T::Type{<:Integer})
+function readchompedstring(boio::ByteOrderIO, T::Type{<:Integer})
     len = Int(readnum(boio, T))
     readchompedstring(boio, len)
 end
@@ -134,8 +135,8 @@ function read_header(io::IO)
         boio = ByteOrderIO(byteorder, io)
         K = verifytag(boio -> readnum(boio, Int16), boio, "K")
         N = verifytag(boio -> readnum(boio, Int64), boio, "N")
-        label = verifytag(boio -> readstrfs(boio, Int16), boio, "label")
-        timestamp = verifytag(boio -> readstrfs(boio, Int8), boio, "timestamp")
+        label = verifytag(boio -> readchompedstring(boio, Int16), boio, "label")
+        timestamp = verifytag(boio -> readchompedstring(boio, Int8), boio, "timestamp")
         DTAHeader(118, Int(K), Int(N), label, timestamp), boio
     end
 end
@@ -176,20 +177,11 @@ Maximum length of `str#` (aka `strfs`) strings in Stata DTA files.
 """
 const STRFSMAXLEN = 2045
 
-struct StrFs{len}
-    function StrFs{len}() where len
-        @assert 1 ≤ len::Int ≤ STRFSMAXLEN
-        new{len}()
-    end
-end
-
-struct StrL end
-
 function decode_variable_type(code::UInt16)
     if 1 ≤ code ≤ STRFSMAXLEN
-        StrFs{Int(code)}
+        StrF{Int(code)}
     elseif code == 32768
-        StrL
+        String
     elseif 65526 ≤ code ≤ 65530
         (Float64, Float32, Int32, Int16, Int8)[code - 65525]
     else
@@ -206,9 +198,7 @@ end
 
 vartype(::Type{T}) where {T <: DATANUMTYPES} = Union{Missing, T}
 
-vartype(::Type{<: StrFs}) = String
-
-vartype(::Type{StrL}) = String
+vartype(::Type{T}) where {T <: Union{StrF, String}} = T
 
 
 # metadata
@@ -254,7 +244,7 @@ decode_missing(x::Float64) = x ≥ MAXFLOAT64 ? missing : x
 
 readfield(boio::ByteOrderIO, T::Type{<: DATANUMTYPES}) = decode_missing(read(boio, T))
 
-readfield(boio::ByteOrderIO, ::Type{StrFs{N}}) where N = readchompedstring(boio, N)
+readfield(boio::ByteOrderIO, ::Type{StrF{N}}) where N = read(boio, StrF{N})
 
 readrow(boio::ByteOrderIO, vartypes) = map(T -> readfield(boio, T), vartypes)
 
