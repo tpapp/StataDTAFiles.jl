@@ -25,6 +25,8 @@ end
     @test dta.variable_names == (:a, :b, :c)
     @test dta.sortlist == []
     @test dta.formats == ["%9.0g", "%9.0g", "%9s"]
-    @test collect(dta) == [(Float32(i), i, string(i)) for i in 1:10]
+    @test all(collect(dta) .≡ [(i > 7 ? missing : Float32(i),
+                                i ≤ 2 ? missing : Int16(i),
+                                string(i)) for i in 1:10])
     close(dta)
 end

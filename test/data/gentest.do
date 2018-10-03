@@ -9,9 +9,11 @@ gen b = _n
 recast int b
 /* third column "c", str2, converted from integers 1, ..., 10 */
 gen c = string(b)
+/* introduce missing values */
+replace a = . if a > 7.0
+replace b = . if b < 3
 /* some debugging info */
 describe
 list
 /* save */
 save testdata, replace
-
