@@ -1,8 +1,14 @@
 using StataDTAFiles, Test
 using StataDTAFiles: LSF, verifytag, read_header, read_map, read_variable_types,
     read_variable_names, read_sortlist, read_formats
+using StrFs
 
 testdata = joinpath(@__DIR__, "data", "testdata.dta")
+
+≅(a, b) = a == b
+≅(a::AbstractVector, b::AbstractVector) = all(a .≅ b)
+≅(a::T, b::T) where T <: Tuple = all(a .≅ b)
+≅(::Missing, ::Missing) = true
 
 @testset "reading tags" begin
     @test verifytag(IOBuffer("<atag>"), "atag") == nothing
@@ -19,14 +25,14 @@ end
     @test dta.header.observations == 10
     @test dta.header.label == ""
     @test dta.map.eof == filesize(testdata)
-    @test dtatypes(dta) == (Float32, Int16, StrFs{2})
-    @test vartypes(dta) == (Union{Missing, Float32}, Union{Missing, Int16}, String)
+    @test dtatypes(dta) == (Float32, Int16, StrF{2})
+    @test vartypes(dta) == (Union{Missing, Float32}, Union{Missing, Int16}, StrF{2})
     @test eltype(dta) == Tuple{vartypes(dta)...}
     @test dta.variable_names == (:a, :b, :c)
     @test dta.sortlist == []
     @test dta.formats == ["%9.0g", "%9.0g", "%9s"]
-    @test all(collect(dta) .≡ [(i > 7 ? missing : Float32(i),
-                                i ≤ 2 ? missing : Int16(i),
-                                string(i)) for i in 1:10])
+    @test collect(dta) ≅ [(i > 7 ? missing : Float32(i),
+                           i ≤ 2 ? missing : Int16(i),
+                           StrF{2}(string(i))) for i in 1:10]
     close(dta)
 end
