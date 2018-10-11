@@ -4,10 +4,11 @@ using ArgCheck: @argcheck
 using DocStringExtensions: SIGNATURES, TYPEDEF
 using Parameters: @unpack
 using StrFs: StrF
+import Dates
 
 import Base: read, seek, iterate, length, open, close, eltype, show
 
-export DTAFile
+export DTAFile, elapsed_days
 
 
 # types for byteorder handling and IO wrapper
@@ -278,7 +279,7 @@ readrow(boio::ByteOrderIO, ::Type{T}) where {T <: NamedTuple} =
     T(ntuple(i -> readfield(boio, fieldtype(T, i)), fieldcount(T)))
 
 
-#
+# API
 
 """
 $(TYPEDEF)
@@ -371,5 +372,27 @@ function iterate(dta::DTAFile{T}, index = 1) where T
         readrow(boio, T), index + 1
     end
 end
+
+
+# dates
+
+"""
+Start of the epoch, ie "day 0" for most date handling functions in Stata.
+
+!!! note
+    Don't use directly, see [`elapsed_days`](@ref).
+"""
+const EPOCH = Dates.Date(1960, 1, 1)
+
+"""
+$(SIGNATURES)
+
+Convert a Stata "elapsed date" representation into `Date`.
+
+Corresponds to the `%td` format in Stata.
+"""
+elapsed_days(Δ::Integer) = EPOCH + Dates.Day(Δ)
+
+elapsed_days(Δ::Real) = elapsed_days(convert(Int, Δ))
 
 end # module

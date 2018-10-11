@@ -20,7 +20,11 @@ open(DTAFile, ...) do dta
     ...
 end
 ```
-where the method for `open` would open the DTA file, read some metadata (byte order, layout, etc), and provide an iterator for the rows. See the unit tests for examples.
+where the method for `open` would open the DTA file, read some metadata (byte order, layout, etc), and provide an iterator for the rows.
+
+Date conversion is provided by `elapsed_days`.
+
+See the unit tests for examples.
 
 ## Caveats
 

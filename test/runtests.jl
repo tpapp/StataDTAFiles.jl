@@ -2,6 +2,7 @@ using StataDTAFiles, Test
 using StataDTAFiles: LSF, verifytag, read_header, read_map, read_variable_types,
     read_variable_names, read_sortlist, read_formats
 using StrFs
+using Dates
 
 testdata = joinpath(@__DIR__, "data", "testdata.dta")
 
@@ -42,4 +43,11 @@ end
     r_header = raw"^Stata DTA file 118, 3 vars in 10 rows, .*\n\s+not sorted\n"
     r_vars = raw"\s+a::Union\{Missing,\s*Float32\}.*\n\s+b::Union\{Missing,\s*Int16\}.*\n\s+c::StrF\{2\}.*$"
     @test occursin(Regex(r_header * r_vars), str)
+end
+
+@testset "elapsed dates" begin
+    @test elapsed_days(0) == Date(1960, 1, 1)
+    @test elapsed_days(1) == Date(1960, 1, 2)
+    @test elapsed_days(-1) == Date(1959, 12, 31)
+    @test elapsed_days(365) == Date(1960, 12, 31)
 end
