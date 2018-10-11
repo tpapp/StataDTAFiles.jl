@@ -129,8 +129,11 @@ struct DTAHeader
     variables::Int
     observations::Int
     label::String
-    timestamp::String           # FIXME parse date in timestamp
+    timestamp::Dates.DateTime
 end
+
+"Date format of Stata file timestamps."
+const TIMESTAMPFMT = Dates.DateFormat("d u y H:M") # eg 04 Jul 2032 04:23
 
 function read_header(io::IO)
     verifytag(io, "header") do io
@@ -140,7 +143,8 @@ function read_header(io::IO)
         K = verifytag(boio -> readnum(boio, Int16), boio, "K")
         N = verifytag(boio -> readnum(boio, Int64), boio, "N")
         label = verifytag(boio -> readchompedstring(boio, Int16), boio, "label")
-        timestamp = verifytag(boio -> readchompedstring(boio, Int8), boio, "timestamp")
+        timestamp_str = strip(verifytag(boio -> readchompedstring(boio, Int8), boio, "timestamp"))
+        timestamp = Dates.DateTime(timestamp_str, TIMESTAMPFMT)
         DTAHeader(118, Int(K), Int(N), label, timestamp), boio
     end
 end
@@ -306,7 +310,7 @@ function show(io::IO, dta::DTAFile{T}) where T
     printstyled(io, "$(variables) vars"; color = COLORHEADER)
     print(io, " in ")
     printstyled(io, "$(observations) rows"; color = COLORHEADER)
-    println(io, ", ", strip(timestamp))
+    println(io, ", ", timestamp)
     isempty(label) || println(io, "    label: ", label)
     varnames = fieldnames(T)
     if isempty(sortlist)

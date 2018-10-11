@@ -1,6 +1,6 @@
 using StataDTAFiles, Test
 using StataDTAFiles: LSF, verifytag, read_header, read_map, read_variable_types,
-    read_variable_names, read_sortlist, read_formats
+    read_variable_names, read_sortlist, read_formats, TIMESTAMPFMT
 using StrFs
 using Dates
 
@@ -43,6 +43,12 @@ end
     r_header = raw"^Stata DTA file 118, 3 vars in 10 rows, .*\n\s+not sorted\n"
     r_vars = raw"\s+a::Union\{Missing,\s*Float32\}.*\n\s+b::Union\{Missing,\s*Int16\}.*\n\s+c::StrF\{2\}.*$"
     @test occursin(Regex(r_header * r_vars), str)
+end
+
+@testset "timestamp parsing" begin
+    @test DateTime("04 Jul 2032 04:23", TIMESTAMPFMT) ==
+        DateTime("04 Jul 2032 04:23", TIMESTAMPFMT) ==
+        DateTime("2032-07-04T04:23:00")
 end
 
 @testset "elapsed dates" begin
