@@ -5,7 +5,7 @@ using DocStringExtensions: SIGNATURES
 using Parameters: @unpack
 using StrFs: StrF
 
-import Base: read, seek, iterate, length, open, close, eltype
+import Base: read, seek, iterate, length, open, close, eltype, show
 
 export DTAFile, StrFs, StrL, dtatypes, vartypes
 
@@ -258,6 +258,32 @@ struct DTAFile{VT, B <: ByteOrderIO, VN}
     variable_names::VN
     sortlist::Vector{Int16}
     formats::Vector{String}
+end
+
+function show(io::IO, dta::DTAFile)
+    @unpack header, variable_names, sortlist, formats = dta
+    @unpack release, variables, observations, label, timestamp = header
+    COLORHEADER = :red
+    COLORVAR = :blue
+    COLORTYPE = :green
+    print(io, "Stata DTA file $(release), ")
+    printstyled(io, "$(variables) vars in $(observations) rows"; color = COLORHEADER)
+    println(io, ", ", strip(timestamp))
+    isempty(label) || println(io, "    label: ", label)
+    if isempty(sortlist)
+        println(io, "    not sorted")
+    else
+        print(io, "    sorted by ")
+        printstyled(io, variable_names[sortlist], "\n"; color = COLORVAR)
+    end
+    for (i, (variable_name, dtatype, format)) in enumerate(zip(variable_names, dtatypes(dta), formats))
+        i == 1 || println(io)
+        print(io, "  ")
+        printstyled(io, variable_name; color = COLORVAR)
+        print(io, "::")
+        printstyled(io, dtatype; color = COLORTYPE)
+        print(io, " [", format, "]")
+    end
 end
 
 open(::Type{DTAFile}, path::AbstractString) = open(DTAFile, open(path, "r"))

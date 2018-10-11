@@ -36,3 +36,10 @@ end
                            StrF{2}(string(i))) for i in 1:10]
     close(dta)
 end
+
+@testset "reading header" begin
+    str = open(repr, DTAFile, testdata)
+    r_header = raw"^Stata DTA file 118, 3 vars in 10 rows, .*\n\s+not sorted\n"
+    r_vars = raw"\s+a::Float32.*\n\s+b::Int16.*\n\s+c::StrF\{2\}.*$"
+    @test occursin(Regex(r_header * r_vars), str)
+end
