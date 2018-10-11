@@ -4,10 +4,11 @@ using ArgCheck: @argcheck
 using DocStringExtensions: SIGNATURES, TYPEDEF
 using Parameters: @unpack
 using StrFs: StrF
+import Dates
 
 import Base: read, seek, iterate, length, open, close, eltype, show
 
-export DTAFile
+export DTAFile, elapsed_days
 
 
 # types for byteorder handling and IO wrapper
@@ -128,8 +129,11 @@ struct DTAHeader
     variables::Int
     observations::Int
     label::String
-    timestamp::String           # FIXME parse date in timestamp
+    timestamp::Dates.DateTime
 end
+
+"Date format of Stata file timestamps."
+const TIMESTAMPFMT = Dates.DateFormat("d u y H:M") # eg 04 Jul 2032 04:23
 
 function read_header(io::IO)
     verifytag(io, "header") do io
@@ -139,7 +143,8 @@ function read_header(io::IO)
         K = verifytag(boio -> readnum(boio, Int16), boio, "K")
         N = verifytag(boio -> readnum(boio, Int64), boio, "N")
         label = verifytag(boio -> readchompedstring(boio, Int16), boio, "label")
-        timestamp = verifytag(boio -> readchompedstring(boio, Int8), boio, "timestamp")
+        timestamp_str = strip(verifytag(boio -> readchompedstring(boio, Int8), boio, "timestamp"))
+        timestamp = Dates.DateTime(timestamp_str, TIMESTAMPFMT)
         DTAHeader(118, Int(K), Int(N), label, timestamp), boio
     end
 end
@@ -278,7 +283,7 @@ readrow(boio::ByteOrderIO, ::Type{T}) where {T <: NamedTuple} =
     T(ntuple(i -> readfield(boio, fieldtype(T, i)), fieldcount(T)))
 
 
-#
+# API
 
 """
 $(TYPEDEF)
@@ -305,7 +310,7 @@ function show(io::IO, dta::DTAFile{T}) where T
     printstyled(io, "$(variables) vars"; color = COLORHEADER)
     print(io, " in ")
     printstyled(io, "$(observations) rows"; color = COLORHEADER)
-    println(io, ", ", strip(timestamp))
+    println(io, ", ", timestamp)
     isempty(label) || println(io, "    label: ", label)
     varnames = fieldnames(T)
     if isempty(sortlist)
@@ -371,5 +376,27 @@ function iterate(dta::DTAFile{T}, index = 1) where T
         readrow(boio, T), index + 1
     end
 end
+
+
+# dates
+
+"""
+Start of the epoch, ie "day 0" for most date handling functions in Stata.
+
+!!! note
+    Don't use directly, see [`elapsed_days`](@ref).
+"""
+const EPOCH = Dates.Date(1960, 1, 1)
+
+"""
+$(SIGNATURES)
+
+Convert a Stata "elapsed date" representation into `Date`.
+
+Corresponds to the `%td` format in Stata.
+"""
+elapsed_days(Δ::Integer) = EPOCH + Dates.Day(Δ)
+
+elapsed_days(Δ::Real) = elapsed_days(convert(Int, Δ))
 
 end # module
