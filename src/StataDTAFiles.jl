@@ -1,13 +1,13 @@
 module StataDTAFiles
 
 using ArgCheck: @argcheck
-using DocStringExtensions: SIGNATURES
+using DocStringExtensions: SIGNATURES, TYPEDEF
 using Parameters: @unpack
 using StrFs: StrF
 
 import Base: read, seek, iterate, length, open, close, eltype, show
 
-export DTAFile, StrFs, StrL, dtatypes, vartypes
+export DTAFile
 
 
 # types for byteorder handling and IO wrapper
@@ -118,7 +118,10 @@ end
 # header
 
 """
-DTA file header (without the byte order, which is encoded in the corresponding `ByteOrderIO`.
+$(TYPEDEF)
+
+DTA file header (without the byte order, which is encoded in the corresponding
+`ByteOrderIO`.
 """
 struct DTAHeader
     release::Int
@@ -177,18 +180,31 @@ Maximum length of `str#` (aka `strfs`) strings in Stata DTA files.
 """
 const STRFSMAXLEN = 2045
 
+"""
+$(SIGNATURES)
+
+Map the numerical type code in a DTA file to a Julia type.
+
+Note that numeric types use a sentinel for missing values, and thus are decoded as
+`Union{Missing, T}` for the corresponding type `T`.
+"""
 function decode_variable_type(code::UInt16)
     if 1 ≤ code ≤ STRFSMAXLEN
         StrF{Int(code)}
     elseif code == 32768
         String
     elseif 65526 ≤ code ≤ 65530
-        (Float64, Float32, Int32, Int16, Int8)[code - 65525]
+        Union{Missing, (Float64, Float32, Int32, Int16, Int8)[code - 65525]}
     else
         error("unrecognized variable type code $(code)")
     end
 end
 
+"""
+$(SIGNATURES)
+
+Read variable types from a DTA file. Return a tuple of Julia types.
+"""
 function read_variable_types(boio::ByteOrderIO, header::DTAHeader, map::DTAMap)
     seek(boio, map.variable_types)
     verifytag(boio, "variable_types") do boio
@@ -196,13 +212,14 @@ function read_variable_types(boio::ByteOrderIO, header::DTAHeader, map::DTAMap)
     end
 end
 
-vartype(::Type{T}) where {T <: DATANUMTYPES} = Union{Missing, T}
-
-vartype(::Type{T}) where {T <: Union{StrF, String}} = T
-
 
 # metadata
 
+"""
+$(SIGNATURES)
+
+Read variable names, returning a tuple of `Symbol`s.
+"""
 function read_variable_names(boio::ByteOrderIO, header::DTAHeader, map::DTAMap)
     seek(boio, map.varnames)
     verifytag(boio, "varnames") do boio
@@ -210,6 +227,11 @@ function read_variable_names(boio::ByteOrderIO, header::DTAHeader, map::DTAMap)
     end
 end
 
+"""
+$(SIGNATURES)
+
+Read the sortlist, a vector if integers which contains column indexes for nested sorting.
+"""
 function read_sortlist(boio::ByteOrderIO, header::DTAHeader, map::DTAMap)
     seek(boio, map.sortlist)
     verifytag(boio, "sortlist") do boio
@@ -220,6 +242,11 @@ function read_sortlist(boio::ByteOrderIO, header::DTAHeader, map::DTAMap)
     end
 end
 
+"""
+$(SIGNATURES)
+
+Read the format strings, returning a `Vector{String}`.
+"""
 function read_formats(boio::ByteOrderIO, header::DTAHeader, map::DTAMap)
     seek(boio, map.formats)
     verifytag(boio, "formats") do boio
@@ -242,46 +269,57 @@ decode_missing(x::Int32) = x ≥ MAXINT32 ? missing : x
 decode_missing(x::Float32) = x ≥ MAXFLOAT32 ? missing : x
 decode_missing(x::Float64) = x ≥ MAXFLOAT64 ? missing : x
 
-readfield(boio::ByteOrderIO, T::Type{<: DATANUMTYPES}) = decode_missing(read(boio, T))
+readfield(boio::ByteOrderIO, ::Type{Union{Missing,T}}) where T =
+    decode_missing(read(boio, T))
 
 readfield(boio::ByteOrderIO, ::Type{StrF{N}}) where N = read(boio, StrF{N})
 
-readrow(boio::ByteOrderIO, vartypes) = map(T -> readfield(boio, T), vartypes)
+readrow(boio::ByteOrderIO, ::Type{T}) where {T <: NamedTuple} =
+    T(ntuple(i -> readfield(boio, fieldtype(T, i)), fieldcount(T)))
 
 
 #
 
-struct DTAFile{VT, B <: ByteOrderIO, VN}
+"""
+$(TYPEDEF)
+
+Representation of a Stata DTA file for which everything except the data itself has been read.
+
+The data (rows) can be read as `NamedTuple`s, using the iteration interface.
+"""
+struct DTAFile{T <: NamedTuple, B <: ByteOrderIO}
     boio::B
     header::DTAHeader
     map::DTAMap
-    variable_names::VN
     sortlist::Vector{Int16}
     formats::Vector{String}
 end
 
-function show(io::IO, dta::DTAFile)
-    @unpack header, variable_names, sortlist, formats = dta
+function show(io::IO, dta::DTAFile{T}) where T
+    @unpack header, sortlist, formats = dta
     @unpack release, variables, observations, label, timestamp = header
     COLORHEADER = :red
     COLORVAR = :blue
     COLORTYPE = :green
     print(io, "Stata DTA file $(release), ")
-    printstyled(io, "$(variables) vars in $(observations) rows"; color = COLORHEADER)
+    printstyled(io, "$(variables) vars"; color = COLORHEADER)
+    print(io, " in ")
+    printstyled(io, "$(observations) rows"; color = COLORHEADER)
     println(io, ", ", strip(timestamp))
     isempty(label) || println(io, "    label: ", label)
+    varnames = fieldnames(T)
     if isempty(sortlist)
         println(io, "    not sorted")
     else
         print(io, "    sorted by ")
-        printstyled(io, variable_names[sortlist], "\n"; color = COLORVAR)
+        printstyled(io, varnames[sortlist], "\n"; color = COLORVAR)
     end
-    for (i, (variable_name, dtatype, format)) in enumerate(zip(variable_names, dtatypes(dta), formats))
+    for (i, (varname, format)) in enumerate(zip(varnames, formats))
         i == 1 || println(io)
         print(io, "  ")
-        printstyled(io, variable_name; color = COLORVAR)
+        printstyled(io, varname; color = COLORVAR)
         print(io, "::")
-        printstyled(io, dtatype; color = COLORTYPE)
+        printstyled(io, fieldtype(T, varname); color = COLORTYPE)
         print(io, " [", format, "]")
     end
 end
@@ -299,8 +337,8 @@ function open(::Type{DTAFile}, io::IO)
     sortlist = read_sortlist(boio, header, map)
     formats = read_formats(boio, header, map)
     variable_types = read_variable_types(boio, header, map)
-    DTAFile{Tuple{variable_types...}, typeof(boio), typeof(variable_names)
-            }(boio, header, map, variable_names, sortlist, formats)
+    DTAFile{NamedTuple{variable_names, Tuple{variable_types...}},
+            typeof(boio)}(boio, header, map, sortlist, formats)
 end
 
 function open(f::Function, ::Type{DTAFile}, args...)
@@ -314,17 +352,14 @@ end
 
 close(dta::DTAFile) = close(dta.boio.io)
 
-dtatypes(dta::DTAFile{VT}) where VT = ntuple(i -> fieldtype(VT, i), fieldcount(VT))
-
-vartypes(dta::DTAFile) = vartype.(dtatypes(dta))
+eltype(dta::DTAFile{T}) where T = T
 
 
 # iteration interface
 
-eltype(dta::DTAFile) = Tuple{vartypes(dta)...}
 length(dta::DTAFile) = dta.header.observations
 
-function iterate(dta::DTAFile, index = 1)
+function iterate(dta::DTAFile{T}, index = 1) where T
     @unpack boio = dta
     if index > dta.header.observations
         nothing
@@ -333,7 +368,7 @@ function iterate(dta::DTAFile, index = 1)
             seek(boio, dta.map.data)
             verifytag(boio, "data")
         end
-        readrow(boio, dtatypes(dta)), index + 1
+        readrow(boio, T), index + 1
     end
 end
 
