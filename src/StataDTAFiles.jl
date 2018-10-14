@@ -280,7 +280,7 @@ readfield(boio::ByteOrderIO, ::Type{Union{Missing,T}}) where T =
 readfield(boio::ByteOrderIO, ::Type{StrF{N}}) where N = read(boio, StrF{N})
 
 readrow(boio::ByteOrderIO, ::Type{T}) where {T <: NamedTuple} =
-    T(ntuple(i -> readfield(boio, fieldtype(T, i)), fieldcount(T)))
+    T(readfield(boio, fieldtype(T, n)) for i in fieldnames(T))::T
 
 
 # API
