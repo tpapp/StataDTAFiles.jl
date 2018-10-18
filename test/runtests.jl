@@ -27,9 +27,12 @@ end
     @test dta.header.observations == 10
     @test dta.header.label == ""
     @test dta.map.eof == filesize(testdata)
+    @test Base.IteratorEltype(typeof(dta)) ≡ Base.HasEltype()
     @test eltype(dta) == NamedTuple{(:a, :b, :c), Tuple{Union{Missing, Float32},
                                                         Union{Missing, Int16},
                                                         StrF{2}}}
+    @test Base.IteratorSize(typeof(dta)) ≡ Base.HasLength()
+    @test length(dta) == 10
     @test dta.sortlist == []
     @test dta.formats == ["%9.0g", "%9.0g", "%9s"]
     @test collect(dta) ≅ [(a = i > 7 ? missing : Float32(i),

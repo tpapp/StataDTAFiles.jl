@@ -357,10 +357,10 @@ end
 
 close(dta::DTAFile) = close(dta.boio.io)
 
-eltype(dta::DTAFile{T}) where T = T
-
 
 # iteration interface
+
+eltype(::Type{<: DTAFile{T}}) where T = T
 
 length(dta::DTAFile) = dta.header.observations
 
