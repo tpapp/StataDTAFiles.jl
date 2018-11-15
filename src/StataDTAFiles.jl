@@ -279,8 +279,16 @@ readfield(boio::ByteOrderIO, ::Type{Union{Missing,T}}) where T =
 
 readfield(boio::ByteOrderIO, ::Type{StrF{N}}) where N = read(boio, StrF{N})
 
-readrow(boio::ByteOrderIO, ::Type{T}) where {T <: NamedTuple} =
-    T(ntuple(i -> readfield(boio, fieldtype(T, i)), fieldcount(T)))
+_readrow(boio::ByteOrderIO, ::Type{Tuple{}}) = ()
+
+_readrow(boio::ByteOrderIO, ::Type{T}) where T <: Tuple =
+    (readfield(boio, Base.tuple_type_head(T)), _readrow(boio, Base.tuple_type_tail(T))...)
+
+# NOTE: type assertion below is needed because of
+# https://github.com/JuliaLang/julia/issues/29970
+# TODO: revisit once that improves
+readrow(boio::ByteOrderIO, ::Type{NamedTuple{N,T}}) where {N,T} =
+    NamedTuple{N,T}(_readrow(boio, T))::NamedTuple{N,T}
 
 
 # API
