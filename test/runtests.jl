@@ -1,8 +1,9 @@
 using StataDTAFiles, Test
 using StataDTAFiles: LSF, verifytag, read_header, read_map, read_variable_types,
-    read_variable_names, read_sortlist, read_formats, TIMESTAMPFMT
+    read_variable_names, read_sortlist, read_formats, TIMESTAMPFMT, readrow
 using StrFs
 using Dates
+using Parameters: @unpack
 
 testdata = joinpath(@__DIR__, "data", "testdata.dta")
 
@@ -35,9 +36,9 @@ end
     @test length(dta) == 10
     @test dta.sortlist == []
     @test dta.formats == ["%9.0g", "%9.0g", "%9s"]
-    @test collect(dta) ≅ [(a = i > 7 ? missing : Float32(i),
-                           b = i ≤ 2 ? missing : Int16(i),
-                           c = StrF{2}(string(i))) for i in 1:10]
+    @test @inferred(collect(dta)) ≅ [(a = i > 7 ? missing : Float32(i),
+                                     b = i ≤ 2 ? missing : Int16(i),
+                                     c = StrF{2}(string(i))) for i in 1:10]
     close(dta)
 end
 
@@ -46,6 +47,17 @@ end
     r_header = raw"^Stata DTA file 118, 3 vars in 10 rows, .*\n\s+not sorted\n"
     r_vars = raw"\s+a::Union\{Missing,\s*Float32\}.*\n\s+b::Union\{Missing,\s*Int16\}.*\n\s+c::StrF\{2\}.*$"
     @test occursin(Regex(r_header * r_vars), str)
+end
+
+@testset "type stability" begin
+    # Test that readrow is inferred. Tests use internals, which are not part of the API.
+    dta = open(DTAFile, testdata)
+    @unpack boio = dta
+    seek(boio, dta.map.data)
+    verifytag(boio, "data")
+    for _ in 1:length(dta)
+        @inferred readrow(boio, eltype(dta))
+    end
 end
 
 @testset "timestamp parsing" begin
