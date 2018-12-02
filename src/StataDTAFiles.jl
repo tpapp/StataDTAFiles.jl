@@ -5,10 +5,11 @@
 module StataDTAFiles
 
 using ArgCheck: @argcheck
+import Dates
 using DocStringExtensions: SIGNATURES, TYPEDEF
 using Parameters: @unpack
 using StrFs: StrF
-import Dates
+import Tables
 
 import Base: read, seek, iterate, length, open, close, eltype, show
 
@@ -397,6 +398,20 @@ function iterate(dta::DTAFile{T}, index = 1) where T
         end
         readrow(boio, T), index + 1
     end
+end
+
+####
+#### Tables interface
+####
+
+Tables.istable(::Type{<:DTAFile}) = true
+
+Tables.rowaccess(::Type{<:DTAFile}) = true
+
+Tables.rows(dta::DTAFile) = dta
+
+function Tables.schema(dta::DTAFile{NamedTuple{names, types}}) where {names, types}
+    Tables.Schema(names, types)
 end
 
 ####
