@@ -1,17 +1,23 @@
+#####
+##### Read Stata DTA files using a row-wise interface, via Tables
+#####
+
 module StataDTAFiles
 
 using ArgCheck: @argcheck
+import Dates
 using DocStringExtensions: SIGNATURES, TYPEDEF
 using Parameters: @unpack
 using StrFs: StrF
-import Dates
+import Tables
 
 import Base: read, seek, iterate, length, open, close, eltype, show
 
 export DTAFile, elapsed_days
 
-
-# types for byteorder handling and IO wrapper
+####
+#### types for byteorder handling and IO wrapper
+####
 
 abstract type ByteOrder end
 
@@ -28,8 +34,9 @@ read(io::ByteOrderIO, ::Type{UInt8}) = read(io.io, UInt8)
 
 seek(io::ByteOrderIO, pos) = seek(io.io, pos)
 
-
-# tag verification
+####
+#### tag verification
+####
 
 function verifytag(io::IO, tag::AbstractArray{UInt8}, closing::Bool = false)
     read(io, UInt8) == UInt8('<') || error("First byte is not a '<'.")
@@ -52,8 +59,9 @@ function verifytag(f::Function, io::IO, tag)
     result
 end
 
-
-# reading primitives
+####
+#### reading primitives
+####
 
 readfixedstring(io::IO, nb) = String(read!(io, Vector{UInt8}(undef, nb)))
 
@@ -115,8 +123,9 @@ function readchompedstring(boio::ByteOrderIO, T::Type{<:Integer})
     readchompedstring(boio, len)
 end
 
-
-# header
+####
+#### header
+####
 
 """
 $(TYPEDEF)
@@ -149,8 +158,9 @@ function read_header(io::IO)
     end
 end
 
-
-# map
+####
+#### map
+####
 
 struct DTAMap
     stata_data_open::Int64
@@ -177,8 +187,9 @@ function read_map(boio::ByteOrderIO)
     end
 end
 
-
-# types
+####
+#### types
+####
 
 """
 Maximum length of `str#` (aka `strfs`) strings in Stata DTA files.
@@ -217,8 +228,9 @@ function read_variable_types(boio::ByteOrderIO, header::DTAHeader, map::DTAMap)
     end
 end
 
-
-# metadata
+####
+#### metadata
+####
 
 """
 $(SIGNATURES)
@@ -259,8 +271,9 @@ function read_formats(boio::ByteOrderIO, header::DTAHeader, map::DTAMap)
     end
 end
 
-
-# read data
+####
+#### read data
+####
 
 const MAXINT8 = Int8(0x64)
 const MAXINT16 = Int16(0x7fe4)
@@ -290,8 +303,9 @@ _readrow(boio::ByteOrderIO, ::Type{T}) where T <: Tuple =
 readrow(boio::ByteOrderIO, ::Type{NamedTuple{N,T}}) where {N,T} =
     NamedTuple{N,T}(_readrow(boio, T))::NamedTuple{N,T}
 
-
-# API
+####
+#### API
+####
 
 """
 $(TYPEDEF)
@@ -365,8 +379,9 @@ end
 
 close(dta::DTAFile) = close(dta.boio.io)
 
-
-# iteration interface
+####
+#### row iteration interface
+####
 
 eltype(::Type{<: DTAFile{T}}) where T = T
 
@@ -385,8 +400,23 @@ function iterate(dta::DTAFile{T}, index = 1) where T
     end
 end
 
-
-# dates
+####
+#### Tables interface
+####
+
+Tables.istable(::Type{<:DTAFile}) = true
+
+Tables.rowaccess(::Type{<:DTAFile}) = true
+
+Tables.rows(dta::DTAFile) = dta
+
+function Tables.schema(dta::DTAFile{NamedTuple{names, types}}) where {names, types}
+    Tables.Schema(names, types)
+end
+
+####
+#### date
+####
 
 """
 Start of the epoch, ie "day 0" for most date handling functions in Stata.

@@ -1,9 +1,8 @@
-using StataDTAFiles, Test
+using StataDTAFiles, Test, Dates, StrFs
 using StataDTAFiles: LSF, verifytag, read_header, read_map, read_variable_types,
     read_variable_names, read_sortlist, read_formats, TIMESTAMPFMT, readrow
-using StrFs
-using Dates
 using Parameters: @unpack
+import Tables
 
 testdata = joinpath(@__DIR__, "data", "testdata.dta")
 
@@ -56,7 +55,7 @@ end
     seek(boio, dta.map.data)
     verifytag(boio, "data")
     for _ in 1:length(dta)
-        @inferred readrow(boio, eltype(dta))
+        @test @inferred(readrow(boio, eltype(dta))) isa NamedTuple
     end
 end
 
@@ -71,4 +70,19 @@ end
     @test elapsed_days(1) == Date(1960, 1, 2)
     @test elapsed_days(-1) == Date(1959, 12, 31)
     @test elapsed_days(365) == Date(1960, 12, 31)
+end
+
+@testset "tables interface" begin
+    dta = open(DTAFile, testdata)
+    @test Tables.istable(typeof(dta)) == true
+    @test Tables.rowaccess(typeof(dta)) == true
+    @test Tables.rows(dta) ≡ dta
+    @test Tables.schema(dta) ≡ Tables.Schema((:a, :b, :c),
+                                             (Union{Missing, Float32},
+                                              Union{Missing, Int16},
+                                              StrF{2}))
+    @test Tables.columntable(dta) ≅
+        (a = Union{Missing, Float32}[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, missing, missing, missing],
+         b = Union{Missing, Int16}[missing, missing, 3, 4, 5, 6, 7, 8, 9, 10],
+         c = StrF{2}["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"])
 end
